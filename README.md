@@ -8,4 +8,4 @@ git clone https://github.com/RockLeezoho/CSDLPT_10N08.git
 cd team-project
 
 ## Vào nhánh của mình:
-git checkout -b <ten nhanh>
+git checkout -b ten nhanh
