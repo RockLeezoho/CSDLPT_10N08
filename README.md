@@ -5,7 +5,10 @@ Bài tập lớn môn CSDLPT PTIT
 git clone https://github.com/RockLeezoho/CSDLPT_10N08.git
 
 ## Vào thư mục project:
-cd team-project
+cd ten_thu_muc
 
 ## Vào nhánh của mình:
-git checkout -b ten nhanh
+git checkout -b ten_nhanh
+
+## Đồng bộ nhánh Local với nhánh Remote:
+git pull origin ten_nhanh
