@@ -8,7 +8,7 @@ git clone https://github.com/RockLeezoho/CSDLPT_10N08.git
 cd ten_thu_muc
 
 ## Vào nhánh của mình:
-git checkout -b ten_nhanh
+git checkout ten_nhanh
 
 ## Đồng bộ nhánh Local với nhánh Remote:
 git pull origin ten_nhanh
