@@ -1,6 +1,5 @@
-#
-# Tester for the assignement1
-#
+# Tester for the assignment1 (MySQL version)
+
 DATABASE_NAME = 'dds_assgn1'
 
 # TODO: Change these as per your code
@@ -13,7 +12,6 @@ RATING_COLNAME = 'rating'
 INPUT_FILE_PATH = 'test_data.dat'
 ACTUAL_ROWS_IN_INPUT_FILE = 20  # Number of lines in the input file
 
-import psycopg2
 import traceback
 import testHelper
 import Interface as MyAssignment
@@ -23,23 +21,23 @@ if __name__ == '__main__':
         testHelper.createdb(DATABASE_NAME)
 
         with testHelper.getopenconnection(dbname=DATABASE_NAME) as conn:
-            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+            # No need for setting isolation level in MySQL
 
             testHelper.deleteAllPublicTables(conn)
 
             [result, e] = testHelper.testloadratings(MyAssignment, RATINGS_TABLE, INPUT_FILE_PATH, conn, ACTUAL_ROWS_IN_INPUT_FILE)
-            if result :
+            if result:
                 print("loadratings function pass!")
             else:
                 print("loadratings function fail!")
 
             [result, e] = testHelper.testrangepartition(MyAssignment, RATINGS_TABLE, 5, conn, 0, ACTUAL_ROWS_IN_INPUT_FILE)
-            if result :
+            if result:
                 print("rangepartition function pass!")
             else:
                 print("rangepartition function fail!")
 
-            # ALERT:: Use only one at a time i.e. uncomment only one line at a time and run the script
+            # ALERT:: Use only one at a time
             [result, e] = testHelper.testrangeinsert(MyAssignment, RATINGS_TABLE, 100, 2, 3, conn, '2')
             # [result, e] = testHelper.testrangeinsert(MyAssignment, RATINGS_TABLE, 100, 2, 0, conn, '0')
             if result:
@@ -51,16 +49,16 @@ if __name__ == '__main__':
             MyAssignment.loadratings(RATINGS_TABLE, INPUT_FILE_PATH, conn)
 
             [result, e] = testHelper.testroundrobinpartition(MyAssignment, RATINGS_TABLE, 5, conn, 0, ACTUAL_ROWS_IN_INPUT_FILE)
-            if result :
+            if result:
                 print("roundrobinpartition function pass!")
             else:
-                print("roundrobinpartition function fail")
+                print("roundrobinpartition function fail!")
 
             # ALERT:: Change the partition index according to your testing sequence.
             [result, e] = testHelper.testroundrobininsert(MyAssignment, RATINGS_TABLE, 100, 1, 3, conn, '0')
             # [result, e] = testHelper.testroundrobininsert(MyAssignment, RATINGS_TABLE, 100, 1, 3, conn, '1')
             # [result, e] = testHelper.testroundrobininsert(MyAssignment, RATINGS_TABLE, 100, 1, 3, conn, '2')
-            if result :
+            if result:
                 print("roundrobininsert function pass!")
             else:
                 print("roundrobininsert function fail!")
@@ -68,6 +66,7 @@ if __name__ == '__main__':
             choice = input('Press enter to Delete all tables? ')
             if choice == '':
                 testHelper.deleteAllPublicTables(conn)
+
             if not conn.close:
                 conn.close()
 
