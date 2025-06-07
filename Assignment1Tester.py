@@ -10,10 +10,10 @@ RROBIN_TABLE_PREFIX = 'rrobin_part'
 USER_ID_COLNAME = 'userid'
 MOVIE_ID_COLNAME = 'movieid'
 RATING_COLNAME = 'rating'
-INPUT_FILE_PATH = 'test_data.dat'
-ACTUAL_ROWS_IN_INPUT_FILE = 20 # Number of lines in the input file
-# INPUT_FILE_PATH = 'ratings.dat'
-# ACTUAL_ROWS_IN_INPUT_FILE = 10000054 
+# INPUT_FILE_PATH = 'test_data.dat'
+# ACTUAL_ROWS_IN_INPUT_FILE = 20 # Number of lines in the input file
+INPUT_FILE_PATH = 'ratings.dat'
+ACTUAL_ROWS_IN_INPUT_FILE = 10000054 
 import psycopg2
 import traceback
 import testHelper
