@@ -51,9 +51,17 @@ def deleteAllPublicTables(openconnection):
 
     cur.close()
 
-def getopenconnection(user='postgres', password='1234', dbname='postgres'):
-    return psycopg2.connect("dbname='" + dbname + "' user='" + user + "' host='localhost' password='" + password + "'")
+# def getopenconnection(user='postgres', password='1234', dbname='postgres'):
+#     return psycopg2.connect("dbname='" + dbname + "' user='" + user + "' host='localhost' password='" + password + "'")
 
+def getopenconnection(user='postgres', password='123sql', dbname='postgres'):
+    return psycopg2.connect(
+        dbname=dbname,
+        user=user,
+        password=password,
+        host='localhost',
+        port=5432 
+    )
 
 ####### Tester support
 def getCountrangepartition(ratingstablename, numberofpartitions, openconnection):
