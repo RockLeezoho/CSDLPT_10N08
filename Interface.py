@@ -8,7 +8,7 @@ import psycopg2
 DATABASE_NAME = 'dds_assgn1'
 
 
-def getopenconnection(user='postgres', password='1234', dbname='postgres'):
+def getopenconnection(user='postgres', password='123sql', dbname='postgres'):
     return psycopg2.connect(
         dbname=dbname,
         user=user,
@@ -17,50 +17,48 @@ def getopenconnection(user='postgres', password='1234', dbname='postgres'):
     )
 
 
-def create_db(dbname):
-    """
-    Create a new database if it doesn't exist.
-    """
-    con = getopenconnection(dbname='postgres')
-    con.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
-    cur = con.cursor()
-    cur.execute("SELECT COUNT(*) FROM pg_catalog.pg_database WHERE datname = %s", (dbname,))
-    if cur.fetchone()[0] == 0:
-        cur.execute('CREATE DATABASE %s' % dbname)
-    else:
-        print('A database named {0} already exists'.format(dbname))
-    cur.close()
-    con.close()
-
+import psycopg2
 
 def loadratings(ratingstablename, ratingsfilepath, openconnection):
     """
-    Load ratings data from file into table.
+    Load ratings data from file into the specified table in the database.
+    Only keeps columns: UserID (int), MovieID (int), Rating (float)
     """
-    con = openconnection
-    cur = con.cursor()
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS {ratingstablename} (
-            userid INTEGER,
-            extra1 CHAR,
-            movieid INTEGER,
-            extra2 CHAR,
-            rating FLOAT,
-            extra3 CHAR,
-            timestamp BIGINT
-        );
-    """)
-    with open(ratingsfilepath, 'r') as f:
-        cur.copy_from(f, ratingstablename, sep=':')
-    cur.execute(f"""
-        ALTER TABLE {ratingstablename}
-        DROP COLUMN extra1,
-        DROP COLUMN extra2,
-        DROP COLUMN extra3,
-        DROP COLUMN timestamp;
-    """)
-    con.commit()
-    cur.close()
+    try:
+        cur = openconnection.cursor()
+
+        # Tạo bảng nếu chưa tồn tại
+        create_table_query = f"""
+            CREATE TABLE IF NOT EXISTS {ratingstablename} (
+                userid INTEGER,
+                movieid INTEGER,
+                rating FLOAT
+            );
+        """
+        cur.execute(create_table_query)
+
+        # Đọc và chèn dữ liệu
+        with open(ratingsfilepath, 'r') as f:
+            for line in f:
+                try:
+                    parts = line.strip().split("::")
+                    if len(parts) != 4:
+                        continue  # Bỏ qua dòng sai định dạng
+                    userid = int(parts[0])
+                    movieid = int(parts[1])
+                    rating = float(parts[2])
+                    # Không lưu timestamp theo yêu cầu đề bài
+                    cur.execute(f"INSERT INTO {ratingstablename} (userid, movieid, rating) VALUES (%s, %s, %s);",
+                                (userid, movieid, rating))
+                except Exception as inner_err:
+                    print(f"Lỗi dòng: {line.strip()} - {inner_err}")
+                    continue
+
+        openconnection.commit()
+        cur.close()
+
+    except Exception as e:
+        print(f"Lỗi khi tải dữ liệu: {e}")
 
 
 def rangepartition(ratingstablename, numberofpartitions, openconnection):
@@ -69,32 +67,46 @@ def rangepartition(ratingstablename, numberofpartitions, openconnection):
     """
     con = openconnection
     cur = con.cursor()
-    range = 5.0 / numberofpartitions  # Mỗi phân vùng rộng range điểm
-    lower = 0
-    part = 0
 
-    #Tao mot bang meta meta_range_part_info de luu tru so luong phan vung
-    cur.execute("DROP TABLE IF EXISTS meta_range_part_info")
-    cur.execute("CREATE TABLE meta_range_part_info (numberofpartitions INT)")
-    cur.execute("TRUNCATE TABLE meta_range_part_info")
-    cur.execute("INSERT INTO meta_range_part_info VALUES (" + str(numberofpartitions) + ") ")
+    try:
+        delta = 5.0 / numberofpartitions
 
-    #Chen ban ghi vao cac phan vung khac nhau dua tren gia tri rating
-    while lower < 5.0:
-        if lower == 0:
-            cur.execute("DROP TABLE IF EXISTS range_part"+str(part))
-            cur.execute("CREATE TABLE range_part"+str(part)+" AS SELECT * FROM "+ratingstablename+" WHERE rating>="+str(lower)+" AND rating<="+str(lower+range)+";")
-        else:
-            cur.execute("DROP TABLE IF EXISTS range_part"+str(part))
-            cur.execute("CREATE TABLE range_part"+str(part)+" AS SELECT * FROM "+ratingstablename+" WHERE rating>"+str(lower)+" AND rating<="+str(lower+range)+";")
-        lower += range
-        part += 1
+        # Tạo bảng meta lưu số phân vùng
+        cur.execute("DROP TABLE IF EXISTS range_meta")
+        cur.execute("CREATE TABLE range_meta (numberofpartitions INT)")
+        cur.execute("INSERT INTO range_meta VALUES (%s)", (numberofpartitions,))
 
-    con.commit()
-    cur.close()
-        
+        # Tạo từng bảng phân vùng
+        for i in range(numberofpartitions):
+            lower = i * delta
+            upper = (i + 1) * delta
+            part_table = f"range_part{i}"
 
+            cur.execute(f"DROP TABLE IF EXISTS {part_table}")
 
+            if i == 0:
+                # Phân vùng đầu: rating >= lower AND rating <= upper
+                cur.execute(f"""
+                    CREATE TABLE {part_table} AS
+                    SELECT userid, movieid, rating FROM {ratingstablename}
+                    WHERE rating >= %s AND rating <= %s;
+                """, (lower, upper))
+            else:
+                # Các phân vùng còn lại: rating > lower AND rating <= upper
+                cur.execute(f"""
+                    CREATE TABLE {part_table} AS
+                    SELECT userid, movieid, rating FROM {ratingstablename}
+                    WHERE rating > %s AND rating <= %s;
+                """, (lower, upper))
+
+        con.commit()
+
+    except Exception as e:
+        con.rollback()
+        print(f"[ERROR] rangepartition failed: {e}")
+
+    finally:
+        cur.close()
 
 
 def roundrobinpartition(ratingstablename, numberofpartitions, openconnection):
@@ -103,105 +115,132 @@ def roundrobinpartition(ratingstablename, numberofpartitions, openconnection):
     """
     con = openconnection
     cur = con.cursor()
-    list_partitions = list(range(numberofpartitions))
 
-    #Tao mot bang meta de luu tru so luong phan vung va phan vung cuoi cung ma du lieu duoc chen vao
-    cur.execute("drop table if exists meta_rrobin_part_info")
-    cur.execute("create table meta_rrobin_part_info (partition_number INT, numberofpartitions INT)")
+    try:
+        # Xoá bảng meta cũ nếu có
+        cur.execute("DROP TABLE IF EXISTS rrobin_meta;")
+        cur.execute("""
+            CREATE TABLE rrobin_meta (
+                partition_count INT,
+                last_inserted INT
+            );
+        """)
+        cur.execute("INSERT INTO rrobin_meta (partition_count, last_inserted) VALUES (%s, %s);",
+                    (numberofpartitions, -1))
 
+        # Tạo các bảng phân vùng round robin
+        for part in range(numberofpartitions):
+            part_table = f"rrobin_part{part}"
+            cur.execute(f"DROP TABLE IF EXISTS {part_table};")
 
-    last=-1
-    #Chen vao rrobin_partitions dua tren row_numbers
-    for part in list_partitions:
-        cur.execute("drop table if exists rrobin_part" + str(part))
-        cur.execute("create table rrobin_part" + str(part) + " as select userid,movieid,rating from  (select userid,movieid,rating,row_number() over() as row_num from " + str(ratingstablename) + ") a where (a.row_num -1 + " + str(numberofpartitions) + ")% " + str(numberofpartitions) + " = " + str(part) )
-        last=part
-        
+            # Tạo bảng phân vùng, nhúng trực tiếp giá trị numberofpartitions và part
+            cur.execute(f"""
+                CREATE TABLE {part_table} AS
+                SELECT userid, movieid, rating
+                FROM (
+                    SELECT userid, movieid, rating, ROW_NUMBER() OVER () as row_num
+                    FROM {ratingstablename}
+                ) AS numbered
+                WHERE (row_num - 1) % {numberofpartitions} = {part};
+            """)
 
-    #Cap nhat bang meta-data de luu tru phan vung cuoi cung noi du lieu duoc chen va tong so phan vung 
-    cur.execute("truncate table meta_rrobin_part_info")	
-    cur.execute("insert into meta_rrobin_part_info values (" + str(last) + "," + str(numberofpartitions) +") "  )
+        con.commit()
 
-    con.commit()
-    cur.close()
+    except Exception as e:
+        con.rollback()
+        print(f"[ERROR] roundrobinpartition failed: {e}")
+
+    finally:
+        cur.close()
 
 
 def roundrobininsert(ratingstablename, userid, itemid, rating, openconnection):
     """
-    Insert into main table and correct round-robin partition.
+    Insert a single row into the main ratings table and the appropriate round robin partition.
+    This function relies on rr_metadata table created in roundrobinpartition.
     """
-    con = openconnection
-    cur = con.cursor()
+    cur = openconnection.cursor()
+    try:
+        # 1. Lấy số phân mảnh và vị trí chèn cuối cùng từ rrobin_meta
+        cur.execute("SELECT partition_count, last_inserted FROM rrobin_meta;")
+        result = cur.fetchone()
+        if not result:
+            raise Exception("rrobin_meta chưa được khởi tạo. Hãy gọi roundrobinpartition trước.")
 
-    #Select the partition number where data was last inserted and the total number of partitions
-    cur.execute("select partition_number,numberofpartitions from meta_rrobin_part_info")
-    f = cur.fetchone()
-    part = f[0]
-    no_of_partitions = f[1]
+        partition_count, last_inserted = result
+        next_partition = (last_inserted + 1) % partition_count
 
+        # 2. Chèn vào bảng chính
+        cur.execute(f"""
+            INSERT INTO {ratingstablename} (userid, movieid, rating)
+            VALUES (%s, %s, %s);
+        """, (userid, itemid, rating))
 
-    #Insert into the correct rrobin_partition  and then into the main ratings table as well	
-    cur.execute("insert into rrobin_part" + str((part + 1)%no_of_partitions) + " values( " + str(userid) + "," + str(itemid) + "," + str(rating) + ") ")
-    cur.execute("insert into ratings values( " + str(userid) + "," + str(itemid) + "," + str(rating) + ") ")
-    part = (part + 1)%no_of_partitions
+        # 3. Chèn vào bảng phân mảnh đúng
+        cur.execute(f"""
+            INSERT INTO rrobin_part{next_partition} (userid, movieid, rating)
+            VALUES (%s, %s, %s);
+        """, (userid, itemid, rating))
 
-    #Update the partition number in the meta table
-    cur.execute("truncate table meta_rrobin_part_info")	
-    cur.execute("insert into meta_rrobin_part_info values (" + str(part) + "," + str(no_of_partitions) +") "  )
+        # 4. Cập nhật metadata
+        cur.execute("UPDATE rrobin_meta SET last_inserted = %s;", (next_partition,))
+        openconnection.commit()
 
-    con.commit()
-    cur.close()
-
+    except Exception as e:
+        print(f"Error in roundrobininsert: {e}")
+        openconnection.rollback()
+    finally:
+        cur.close() 
 
 def rangeinsert(ratingstablename, userid, itemid, rating, openconnection):
-    """
-    Insert into main table and correct range partition.
-    """
-    con = openconnection
-    cur = con.cursor()
+    cur = openconnection.cursor()
+    RANGE_TABLE_PREFIX = 'range_part'
 
-    #Select the total number of range partitions from the meta table	
-    cur.execute("select numberofpartitions from meta_range_part_info")
-    no_of_partitions = cur.fetchone()[0]
+    try:
+        # Chèn vào bảng chính
+        cur.execute(f"""
+            INSERT INTO {ratingstablename} (userid, movieid, rating)
+            VALUES (%s, %s, %s);
+        """, (userid, itemid, rating))
 
-    range = 5.0/no_of_partitions
-    low=0
-    high=range
-    part=0
+        # Lấy số phân vùng từ bảng range_meta
+        cur.execute("SELECT numberofpartitions FROM range_meta")
+        row = cur.fetchone()
+        if not row:
+            raise Exception("range_meta chưa được khởi tạo. Hãy gọi rangepartition trước.")
+        numberofpartitions = row[0]
 
-    #Determine the correct partition
-    while low<5.0:
-        if low==0:
-            if rating >= low and rating <= high:
-                break
-            part = part + 1
-            low = high
-            high = high + range
-                    
-        else:
-            if rating > low and rating <= high:
-                break
-            part  = part + 1
-            low = high
-            high = high + range
-            
-    #Insert into the partition and main ratings table
-    cur.execute("insert into range_part" + str(part) + " values (" + str(userid) + "," + str(itemid) + "," + str(rating) + ") ")
-    cur.execute("insert into ratings values( " + str(userid) + "," + str(itemid) + "," + str(rating) + ") ")
-    con.commit()
-    cur.close()
+        delta = 5.0 / numberofpartitions
 
+        # Hàm xác định phân vùng theo rating (giống rangepartition)
+        def get_partition_index(r, delta, numberofpartitions):
+            if r == 0:
+                return 0
+            for i in range(numberofpartitions):
+                min_bound = i * delta
+                max_bound = (i + 1) * delta
+                if i == 0:
+                    if r >= min_bound and r <= max_bound:
+                        return i
+                else:
+                    if r > min_bound and r <= max_bound:
+                        return i
+            return numberofpartitions - 1
 
-def count_partitions(prefix, openconnection):
-    """
-    Count partition tables with given prefix.
-    """
-    con = openconnection
-    cur = con.cursor()
-    cur.execute("""
-        SELECT COUNT(*) FROM pg_stat_user_tables
-        WHERE relname LIKE %s
-    """, (prefix + '%',))
-    count = cur.fetchone()[0]
-    cur.close()
-    return count
+        index = get_partition_index(rating, delta, numberofpartitions)
+        partition_table = f"{RANGE_TABLE_PREFIX}{index}"
+
+        # Chèn vào bảng phân vùng tương ứng
+        cur.execute(f"""
+            INSERT INTO {partition_table} (userid, movieid, rating)
+            VALUES (%s, %s, %s);
+        """, (userid, itemid, rating))
+
+        openconnection.commit()
+
+    except Exception as e:
+        openconnection.rollback()
+        print(f"[ERROR] rangeinsert failed: {e}")
+
+    finally:
+        cur.close()
