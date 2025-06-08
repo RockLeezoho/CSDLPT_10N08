@@ -5,9 +5,6 @@
 
 import psycopg2
 
-DATABASE_NAME = 'dds_assgn1'
-
-
 def getopenconnection(user='postgres', password='123sql', dbname='postgres'):
     return psycopg2.connect(
         dbname=dbname,
@@ -16,15 +13,37 @@ def getopenconnection(user='postgres', password='123sql', dbname='postgres'):
         password=password
     )
 
+def create_db(dbname):
+    """
+    We create a DB by connecting to the default user and database of Postgres
+    The function first checks if an existing database exists for a given name, else creates it.
+    :return:None
+    """
+    # Connect to the default database
+    con = getopenconnection(dbname='postgres')
+    con.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+    cur = con.cursor()
 
-import psycopg2
+    # Check if an existing database with the same name exists
+    cur.execute('SELECT COUNT(*) FROM pg_catalog.pg_database WHERE datname=\'%s\'' % (dbname,))
+    count = cur.fetchone()[0]
+    if count == 0:
+        cur.execute('CREATE DATABASE %s' % (dbname,))  # Create the database
+    else:
+        print('A database named {0} already exists'.format(dbname))
+
+    # Clean up
+    cur.close()
+    con.close()
 
 def loadratings(ratingstablename, ratingsfilepath, openconnection):
     """
     Load ratings data from file into the specified table in the database.
     Only keeps columns: UserID (int), MovieID (int), Rating (float)
     """
+    # DATABASE_NAME = 'dds_assgn1'
     try:
+        # create_db(DATABASE_NAME)
         cur = openconnection.cursor()
 
         # Tạo bảng nếu chưa tồn tại
