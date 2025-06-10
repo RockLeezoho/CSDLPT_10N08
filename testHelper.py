@@ -51,7 +51,7 @@ def deleteAllPublicTables(openconnection):
 
     cur.close()
 
-def getopenconnection(user='postgres', password='1234', dbname='postgres'):
+def getopenconnection(user='postgres', password='123sql', dbname='postgres'):
     return psycopg2.connect("dbname='" + dbname + "' user='" + user + "' host='localhost' password='" + password + "'")
 
 
@@ -111,6 +111,7 @@ def checkpartitioncount(cursor, expectedpartitions, prefix):
         'Range partitioning not done properly. Excepted {0} table(s) but found {1} table(s)'.format(
             expectedpartitions,
             count))
+
 
 
 def totalrowsinallpartitions(cur, n, rangepartitiontableprefix, partitionstartindex):
