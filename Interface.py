@@ -2,20 +2,20 @@ import psycopg2
 import psycopg2.extensions
 import time
 
-def getopenconnection(user='postgres', password='123sql', dbname='postgres'):
+def getopenconnection(user='postgres', password='123456', dbname='postgres'):
     try:
         return psycopg2.connect(
             dbname=dbname,
             user=user,
             host='localhost',
             password=password,
-            port=5432
+            port=5432,
         )
     except Exception as e:
         print(f"Error connecting to DB: {e}")
         raise
 
-def create_db(dbname, user='postgres', password='123sql'):
+def create_db(dbname, user='postgres', password='123456'):
     con = None
     cur = None
     try:
@@ -42,7 +42,6 @@ def loadratings(ratingstablename, ratingsfilepath, openconnection):
     start = time.time()
     cur = None
     try:
-        create_db("dds_assgn1")
         cur = openconnection.cursor()
         cur.execute(f"DROP TABLE IF EXISTS {ratingstablename} CASCADE;")
         cur.execute(f"""
@@ -97,19 +96,27 @@ def create_range_partition_metadata_table(openconnection):
             cur.close()
 
 def rangepartition(ratingstablename, numberofpartitions, openconnection):
+    import time
     start = time.time()
     cur = None
     try:
+        if numberofpartitions <= 0:
+            raise ValueError("Number of partitions must be greater than 0.")
+
         cur = openconnection.cursor()
         create_range_partition_metadata_table(openconnection)
+
         cur.execute("DELETE FROM range_metadata;")
         for i in range(numberofpartitions):
             cur.execute(f"DROP TABLE IF EXISTS range_part{i} CASCADE;")
+
         delta = 5.0 / numberofpartitions
+
         for i in range(numberofpartitions):
             minRange = round(i * delta, 6)
             maxRange = round(minRange + delta, 6)
             table_name = f"range_part{i}"
+
             cur.execute(f"""
                 CREATE TABLE {table_name} (
                     userid INTEGER,
@@ -117,6 +124,7 @@ def rangepartition(ratingstablename, numberofpartitions, openconnection):
                     rating FLOAT
                 );
             """)
+
             if i == 0:
                 cur.execute(f"""
                     INSERT INTO {table_name} (userid, movieid, rating)
@@ -129,12 +137,14 @@ def rangepartition(ratingstablename, numberofpartitions, openconnection):
                     SELECT userid, movieid, rating FROM {ratingstablename}
                     WHERE rating > %s AND rating <= %s;
                 """, (minRange, maxRange))
+
             cur.execute("""
                 INSERT INTO range_metadata (partition_table_name, range_start, range_end)
                 VALUES (%s, %s, %s);
             """, (table_name, minRange, maxRange))
+
         openconnection.commit()
-        print(f"[TIME]Range partition completed in {time.time() - start:.2f} seconds.")
+        print(f"[TIME] Range partition completed in {time.time() - start:.2f} seconds.")
     except Exception as e:
         if openconnection:
             openconnection.rollback()
@@ -143,6 +153,7 @@ def rangepartition(ratingstablename, numberofpartitions, openconnection):
     finally:
         if cur:
             cur.close()
+
 
 def rangeinsert(ratingstablename, userid, itemid, rating, openconnection):
     start = time.time()
@@ -208,27 +219,53 @@ def create_roundrobin_partition_metadata_table(openconnection):
             cur.close()
 
 def roundrobinpartition(ratingstablename, numberofpartitions, openconnection):
+    import time
     start = time.time()
     cur = None
     try:
         cur = openconnection.cursor()
+
         create_roundrobin_partition_metadata_table(openconnection)
         cur.execute("DELETE FROM roundrobin_metadata;")
+
+        # Drop và tạo lại các partition
         for i in range(numberofpartitions):
             cur.execute(f"DROP TABLE IF EXISTS rrobin_part{i} CASCADE;")
+            cur.execute(f"CREATE TABLE rrobin_part{i} (userid INTEGER, movieid INTEGER, rating FLOAT);")
+
+        # Tạo bảng tạm chứa dữ liệu đã đánh số thứ tự
+        cur.execute("DROP TABLE IF EXISTS temp_rr_table;")
+        cur.execute(f"""
+            CREATE TEMP TABLE temp_rr_table AS
+            SELECT userid, movieid, rating,
+                   ROW_NUMBER() OVER (ORDER BY userid, movieid) AS rnum
+            FROM {ratingstablename};
+        """)
+
+        # Chèn dữ liệu vào từng partition
         for i in range(numberofpartitions):
-            table_name = f"rrobin_part{i}"
-            cur.execute(f"CREATE TABLE {table_name} (userid INTEGER, movieid INTEGER, rating FLOAT);")
             cur.execute(f"""
-                INSERT INTO {table_name} (userid, movieid, rating)
-                SELECT userid, movieid, rating FROM (
-                    SELECT userid, movieid, rating, ROW_NUMBER() OVER (ORDER BY userid) as rnum FROM {ratingstablename}
-                ) AS temp
-                WHERE MOD(temp.rnum - 1, %s) = %s;
+                INSERT INTO rrobin_part{i} (userid, movieid, rating)
+                SELECT userid, movieid, rating
+                FROM temp_rr_table
+                WHERE MOD(rnum - 1, %s) = %s;
             """, (numberofpartitions, i))
-            cur.execute("INSERT INTO roundrobin_metadata (partition_table_name) VALUES (%s);", (table_name,))
+            cur.execute("INSERT INTO roundrobin_metadata (partition_table_name) VALUES (%s);", (f"rrobin_part{i}",))
+
+        # Tính last_rr_index
+        cur.execute("SELECT COUNT(*) FROM temp_rr_table;")
+        total_rows = cur.fetchone()[0]
+        last_index = (total_rows - 1) % numberofpartitions if total_rows > 0 else -1
+
+        # Cập nhật tracker
+        cur.execute("""
+            INSERT INTO rr_index_tracker (id, last_rr_index)
+            VALUES (1, %s)
+            ON CONFLICT (id) DO UPDATE SET last_rr_index = EXCLUDED.last_rr_index;
+        """, (last_index,))
+
         openconnection.commit()
-        print(f"[TIME]Round robin partition completed in {time.time() - start:.2f} seconds.")
+        print(f"[TIME] Round robin partition completed in {time.time() - start:.2f} seconds.")
     except Exception as e:
         if openconnection:
             openconnection.rollback()
@@ -237,6 +274,7 @@ def roundrobinpartition(ratingstablename, numberofpartitions, openconnection):
     finally:
         if cur:
             cur.close()
+
 
 def roundrobininsert(ratingstablename, userid, itemid, rating, openconnection):
     start = time.time()
